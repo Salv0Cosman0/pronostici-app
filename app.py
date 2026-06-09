@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 import numpy as np
+from datetime import datetime
 
 # Configurazione grafica della pagina
 st.set_page_config(page_title="Mondiali Advisor - Schedine Live", page_icon="⚽", layout="centered")
@@ -20,7 +21,7 @@ except Exception:
 REGIO = "eu"          
 MARKETS = "h2h,totals" 
 
-@st.cache_data(ttl=600)  # Ridotto a 10 minuti per maggiore reattività live
+@st.cache_data(ttl=600)  
 def scarica_dati_live():
     sport_key = "soccer_fifa_world_cup" 
     url_odds = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
@@ -36,24 +37,21 @@ def scarica_dati_live():
     except:
         return None
 
-# --- PANNELLO DI CONTROLLO INTERATTIVO (In cima alla pagina) ---
+# --- PANNELLO DI CONTROLLO INTERATTIVO ---
 st.sidebar.header("🎛️ Pannello Schedina")
 
-# 1. Filtro tipo di rischio
 tipo_strategia = st.sidebar.radio(
     "Scegli la strategia dell'algoritmo:",
     ("🟢 Cassa Sicura (Quote Fascia Bassa)", "🟡 Bilanciata (Fascia Media)", "🔴 Alta Quota (Fascia Speculativa)")
 )
 
-# 2. Filtro numero eventi
-num_eventi = st.sidebar.slider("Quanti eventi vuoi in bolletta?", min_value=2, max_value=5, value=3)
+# MODIFICA 1: Esteso il limite massimo dello slider fino a 10 eventi
+num_eventi = st.sidebar.slider("Quanti eventi vuoi in bolletta?", min_value=2, max_value=10, value=4)
 
-# 3. Pulsante di aggiornamento quote live
 if st.sidebar.button("🔄 Aggiorna Quote in Tempo Reale"):
     st.cache_data.clear()
     st.rerun()
 
-# Avvio scaricamento dati
 with st.spinner("⚡ Interrogando i server dei bookmaker..."):
     oracoli_data = scarica_dati_live()
 
@@ -67,6 +65,14 @@ database_completo = []
 for match in oracoli_data:
     home_team = match['home_team']
     away_team = match['away_team']
+    
+    # Estrazione e formattazione della data del match
+    commence_time = match.get('commence_time', '')
+    try:
+        dt_obj = datetime.strptime(commence_time, "%Y-%m-%dT%H:%M:%SZ")
+        data_giorno = dt_obj.strftime("%d/%m/%Y")
+    except:
+        data_giorno = "Prossimi Turni"
     
     if len(match['bookmakers']) == 0: continue
     market_list = match['bookmakers'][0]['markets']
@@ -88,14 +94,21 @@ for match in oracoli_data:
     p_2 = (1 / quota_2) * 100
     p_X = (1 / quota_X) * 100
 
+    # MODIFICA 3: Calcolo reale, matematico e preciso delle quote Doppia Chance (1 / Probabilità Complessiva)
+    quota_1X = round(1 / ((p_1 + p_X) / 100), 2)
+    quota_X2 = round(1 / ((p_2 + p_X) / 100), 2)
+    
+    # Di sicurezza blocchiamo i minimi per evitare arrotondamenti errati sotto l'1.01
+    quota_1X = max(1.01, quota_1X)
+    quota_X2 = max(1.01, quota_X2)
+
     # 🟢 Generazione Opzione Cassaforte
     if p_1 > 60:
-        cassa_label, cassa_q, cassa_p = "1X DOPPIA CHANCE", round(1 / ((p_1+p_X)/100), 2), min(98.0, p_1 + p_X)
+        cassa_label, cassa_q, cassa_p = "1X DOPPIA CHANCE", quota_1X, min(98.0, p_1 + p_X)
     elif p_2 > 60:
-        cassa_label, cassa_q, cassa_p = "X2 DOPPIA CHANCE", round(1 / ((p_2+p_X)/100), 2), min(98.0, p_2 + p_X)
+        cassa_label, cassa_q, cassa_p = "X2 DOPPIA CHANCE", quota_X2, min(98.0, p_2 + p_X)
     else:
         cassa_label, cassa_q, cassa_p = "OVER 1.5 GOL", 1.22, 83.5
-    if cassa_q < 1.15: cassa_q = 1.20
 
     # 🟡 Generazione Opzione Medio/Bilanciata
     if p_1 > p_2 and p_1 > 45:
@@ -111,9 +124,10 @@ for match in oracoli_data:
     else:
         alta_label, alta_q, alta_p = "ESITO PAREGGIO (X)", quota_X, p_X
 
-    # Salviamo l'intero pacchetto dati del match
+    # Salviamo i dati nel database
     database_completo.append({
         "coppia": f"{home_team} vs {away_team}",
+        "giorno": data_giorno,
         "lavagna": f"1: {quota_1} | X: {quota_X} | 2: {quota_2}",
         "cassa": {"giocata": cassa_label, "quota": cassa_q, "prob": cassa_p},
         "medio": {"giocata": medio_label, "quota": medio_q, "prob": medio_p},
@@ -121,12 +135,11 @@ for match in oracoli_data:
     })
 
 # ==========================================
-# 📊 SEZIONE IN PRIMO PIANO: LA SCHEDINA DINAMICA
+# 📊 SEZIONE 1: LA SCHEDINA DINAMICA (FINO A 10 EVENTI)
 # ==========================================
 st.header("💰 La Tua Schedina Personalizzata")
-st.caption("Modifica le impostazioni nella barra laterale sinistra per cambiare strategia!")
+st.caption("Usa il pannello a sinistra per regolare il numero di partite e la propensione al rischio.")
 
-# Prepariamo la lista dei candidati in base alla strategia scelta dall'utente sul sito
 candidati_filtrati = []
 chiave_strategia = "cassa" if "🟢" in tipo_strategia else ("medio" if "🟡" in tipo_strategia else "alta")
 
@@ -138,15 +151,13 @@ for d in database_completo:
         "prob": d[chiave_strategia]["prob"]
     })
 
-# Ordina per probabilità di successo ed estrae il numero di eventi chiesto dall'utente
 candidati_filtrati = sorted(candidati_filtrati, key=lambda x: x['prob'], reverse=True)
 schedina_utente = candidati_filtrati[:num_eventi]
 
 if len(schedina_utente) < 2:
-    st.warning("⚠️ Troppi pochi eventi nel palinsesto attuale per soddisfare i filtri.")
+    st.warning("⚠️ Troppi pochi eventi nel palinsesto attuale per comporre una bolletta.")
 else:
     quota_totale = 1.0
-    # Box grafico per contenere la schedina del giorno
     with st.container():
         for i, part in enumerate(schedina_utente, 1):
             st.info(f"📌 **{i}. {part['match']}** \n\n Esito: `{part['giocata']}` | Quota: **{part['quota']:.2f}** (Affidabilità: {part['prob']:.1f}%)")
@@ -155,19 +166,27 @@ else:
         st.success(f"🔥 **QUOTA TOTALE MOLTIPLICATORE: {quota_totale:.2f}**")
 
 # ==========================================
-# 📚 SEZIONE IN BASSO: LO STUDIO DETTAGLIATO MATCH PER MATCH
+# MODIFICA 2: DIVISIONE DELLO STUDIO IN GIORNATE DEI GIRONI
 # ==========================================
 st.markdown("---")
 st.header("📚 Il Centro Studi dell'Algoritmo")
-st.write("Clicca sulle singole partite qui sotto per vedere l'analisi matematica completa dei 3 livelli di rischio:")
+st.write("Filtra le partite in base ai giorni del calendario ufficiale:")
 
-for d in database_completo:
-    with st.expander(f"🏟️ {d['coppia']}"):
-        st.write(f"**Quote di Partenza dei Bookmaker:** `{d['lavagna']}`")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("🟢 CASSAFORTE", d["cassa"]["giocata"], f"{d['cassa']['quota']:.2f}")
-        col2.metric("🟡 MEDIO", d["medio"]["giocata"], f"{d['medio']['quota']:.2f}")
-        col3.metric("🔴 ALTA QUOTA", d["alta"]["giocata"], f"{d['alta']['quota']:.2f}")
+# Estraiamo tutti i giorni unici in modo ordinato
+giorni_disponibili = sorted(list(set([d["giorno"] for d in database_completo])))
+
+for giorno in giorni_disponibili:
+    st.subheader(f"📅 Partite del {giorno}")
+    
+    # Cicliamo solo i match che appartengono a questa specifica giornata
+    for d in database_completo:
+        if d["giorno"] == giorno:
+            with st.expander(f"🏟️ {d['coppia']}"):
+                st.write(f"**Quote di Partenza dei Bookmaker:** `{d['lavagna']}`")
+                col1, col2, col3 = st.columns(3)
+                col1.metric("🟢 CASSAFORTE", d["cassa"]["giocata"], f"{d['cassa']['quota']:.2f}")
+                col2.metric("🟡 MEDIO", d["medio"]["giocata"], f"{d['medio']['quota']:.2f}")
+                col3.metric("🔴 ALTA QUOTA", d["alta"]["giocata"], f"{d['alta']['quota']:.2f}")
 
 # FOOTER DI COPYRIGHT
 st.markdown("---")

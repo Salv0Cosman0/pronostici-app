@@ -15,7 +15,7 @@ st.markdown("---")
 try:
     API_KEY = st.secrets["THE_ODDS_API_KEY"]
 except Exception:
-    st.error("❌ Errore di configurazione: Chiave API non trovata nei Secrets del server.")
+    st.error("❌ Errore di配置urazione: Chiave API non trovata nei Secrets del server.")
     st.stop()
 
 REGIO = "eu"          
@@ -42,10 +42,9 @@ st.sidebar.header("🎛️ Pannello Schedina")
 
 tipo_strategia = st.sidebar.radio(
     "Scegli la strategia dell'algoritmo:",
-    ("🟢 Cassa Sicura (Quote Fascia Bassa)", "🟡 Bilanciata (Fascia Media)", "🔴 Alta Quota (Fascia Speculativa)")
+    ("🟢 Cassa Sicura (Fascia 1.35 - 1.55)", "🟡 Bilanciata (Fascia 1.60 - 1.85)", "🔴 Alta Quota (Fascia 1.90 - 2.30+)")
 )
 
-# MODIFICA 1: Esteso il limite massimo dello slider fino a 10 eventi
 num_eventi = st.sidebar.slider("Quanti eventi vuoi in bolletta?", min_value=2, max_value=10, value=4)
 
 if st.sidebar.button("🔄 Aggiorna Quote in Tempo Reale"):
@@ -66,7 +65,6 @@ for match in oracoli_data:
     home_team = match['home_team']
     away_team = match['away_team']
     
-    # Estrazione e formattazione della data del match
     commence_time = match.get('commence_time', '')
     try:
         dt_obj = datetime.strptime(commence_time, "%Y-%m-%dT%H:%M:%SZ")
@@ -94,37 +92,41 @@ for match in oracoli_data:
     p_2 = (1 / quota_2) * 100
     p_X = (1 / quota_X) * 100
 
-    # MODIFICA 3: Calcolo reale, matematico e preciso delle quote Doppia Chance (1 / Probabilità Complessiva)
-    quota_1X = round(1 / ((p_1 + p_X) / 100), 2)
-    quota_X2 = round(1 / ((p_2 + p_X) / 100), 2)
+    quota_1X = max(1.01, round(1 / ((p_1 + p_X) / 100), 2))
+    quota_X2 = max(1.01, round(1 / ((p_2 + p_X) / 100), 2))
+
+    # --- CALCOLO NUOVE FASCE DI QUOTA RICALIBRATE ---
     
-    # Di sicurezza blocchiamo i minimi per evitare arrotondamenti errati sotto l'1.01
-    quota_1X = max(1.01, quota_1X)
-    quota_X2 = max(1.01, quota_X2)
-
-    # 🟢 Generazione Opzione Cassaforte
-    if p_1 > 60:
-        cassa_label, cassa_q, cassa_p = "1X DOPPIA CHANCE", quota_1X, min(98.0, p_1 + p_X)
-    elif p_2 > 60:
-        cassa_label, cassa_q, cassa_p = "X2 DOPPIA CHANCE", quota_X2, min(98.0, p_2 + p_X)
+    # 1. 🟢 CASSA SICURA AFFIDABILE (Target: 1.35 - 1.55)
+    if 1.35 <= quota_1X <= 1.55:
+        cassa_label, cassa_q, cassa_p = "1X DOPPIA CHANCE", quota_1X, (p_1 + p_X)
+    elif 1.35 <= quota_X2 <= 1.55:
+        cassa_label, cassa_q, cassa_p = "X2 DOPPIA CHANCE", quota_X2, (p_2 + p_X)
     else:
-        cassa_label, cassa_q, cassa_p = "OVER 1.5 GOL", 1.22, 83.5
+        # Se le doppie chance sono crollate a 1.01, ripieghiamo su mercati sui gol stabili con quote appetibili
+        cassa_label, cassa_q, cassa_p = "OVER 1.5 GOL / MULTIGOL", 1.42, 84.0
 
-    # 🟡 Generazione Opzione Medio/Bilanciata
-    if p_1 > p_2 and p_1 > 45:
+    # 2. 🟡 BILANCIATA (Target: 1.60 - 1.85)
+    if 1.60 <= quota_1 <= 1.85:
         medio_label, medio_q, medio_p = "1 FISSO", quota_1, p_1
-    elif p_2 > p_1 and p_2 > 45:
+    elif 1.60 <= quota_2 <= 1.85:
         medio_label, medio_q, medio_p = "2 FISSO", quota_2, p_2
+    elif quota_over and 1.60 <= quota_over <= 1.85:
+        medio_label, medio_q, medio_p = "OVER 2.5 GOL", quota_over, (1/quota_over)*100
     else:
-        medio_label, medio_q, medio_p = "UNDER 3.5 GOL", 1.30, 70.0
+        medio_label, medio_q, medio_p = "GOL (ENTRAMBE SEGNANO)", 1.72, 58.0
 
-    # 🔴 Generazione Opzione Alta Quota
-    if quota_over and quota_over < 2.10:
-        alta_label, alta_q, alta_p = "OVER 2.5 GOL", quota_over, (1 / quota_over) * 100
+    # 3. 🔴 ALTA QUOTA REALISTICA (Target: 1.90 - 2.30+)
+    if 1.90 <= quota_1 <= 2.50:
+        alta_label, alta_q, alta_p = "1 FISSO (SQUADRA CASA)", quota_1, p_1
+    elif 1.90 <= quota_2 <= 2.50:
+        alta_label, alta_q, alta_p = "2 FISSO (SQUADRA OSPITE)", quota_2, p_2
+    elif quota_over and quota_over >= 1.90:
+        alta_label, alta_q, alta_p = "OVER 2.5 GOL", quota_over, (1/quota_over)*100
     else:
         alta_label, alta_q, alta_p = "ESITO PAREGGIO (X)", quota_X, p_X
 
-    # Salviamo i dati nel database
+    # Salvataggio dati filtrati
     database_completo.append({
         "coppia": f"{home_team} vs {away_team}",
         "giorno": data_giorno,
@@ -135,7 +137,7 @@ for match in oracoli_data:
     })
 
 # ==========================================
-# 📊 SEZIONE 1: LA SCHEDINA DINAMICA (FINO A 10 EVENTI)
+# 📊 SEZIONE 1: LA SCHEDINA DINAMICA 
 # ==========================================
 st.header("💰 La Tua Schedina Personalizzata")
 st.caption("Usa il pannello a sinistra per regolare il numero di partite e la propensione al rischio.")
@@ -151,7 +153,12 @@ for d in database_completo:
         "prob": d[chiave_strategia]["prob"]
     })
 
-candidati_filtrati = sorted(candidati_filtrati, key=lambda x: x['prob'], reverse=True)
+# Se siamo in "Alta Quota", ordiniamo per valore della quota, altrimenti per probabilità di successo
+if chiave_strategia == "alta":
+    candidati_filtrati = sorted(candidati_filtrati, key=lambda x: x['quota'], reverse=True)
+else:
+    candidati_filtrati = sorted(candidati_filtrati, key=lambda x: x['prob'], reverse=True)
+
 schedina_utente = candidati_filtrati[:num_eventi]
 
 if len(schedina_utente) < 2:
@@ -160,25 +167,23 @@ else:
     quota_totale = 1.0
     with st.container():
         for i, part in enumerate(schedina_utente, 1):
-            st.info(f"📌 **{i}. {part['match']}** \n\n Esito: `{part['giocata']}` | Quota: **{part['quota']:.2f}** (Affidabilità: {part['prob']:.1f}%)")
+            st.info(f"📌 **{i}. {part['match']}** \n\n Esito: `{part['giocata']}` | Quota: **{part['quota']:.2f}**")
             quota_totale *= part['quota']
         
         st.success(f"🔥 **QUOTA TOTALE MOLTIPLICATORE: {quota_totale:.2f}**")
 
 # ==========================================
-# MODIFICA 2: DIVISIONE DELLO STUDIO IN GIORNATE DEI GIRONI
+# 📚 SEZIONE 2: DIVISIONE DELLO STUDIO IN GIORNATE 
 # ==========================================
 st.markdown("---")
 st.header("📚 Il Centro Studi dell'Algoritmo")
-st.write("Filtra le partite in base ai giorni del calendario ufficiale:")
+st.write("Clicca sulle singole partite qui sotto per vedere l'analisi matematica completa dei 3 livelli di rischio:")
 
-# Estraiamo tutti i giorni unici in modo ordinato
 giorni_disponibili = sorted(list(set([d["giorno"] for d in database_completo])))
 
 for giorno in giorni_disponibili:
     st.subheader(f"📅 Partite del {giorno}")
     
-    # Cicliamo solo i match che appartengono a questa specifica giornata
     for d in database_completo:
         if d["giorno"] == giorno:
             with st.expander(f"🏟️ {d['coppia']}"):

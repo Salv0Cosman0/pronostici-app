@@ -5,12 +5,12 @@ import numpy as np
 # Configurazione grafica della pagina
 st.set_page_config(page_title="Mondiali Advisor - Schedine Live", page_icon="⚽", layout="centered")
 
+# HEADER E FIRMA
 st.title("⚽ Mondiali Advisor")
-# FIRMA SOTTO IL TITOLO
-st.markdown("*Realizzato con orgoglio da **Salvatore Cosmano***")
+st.markdown("*Software di Analisi Predittiva realizzato da **Salvatore Cosmano***")
 st.markdown("---")
 
-# Recupero automatico e sicuro della chiave API nascosta nei Secrets
+# Recupero automatico della chiave API nascosta nei Secrets
 try:
     API_KEY = st.secrets["THE_ODDS_API_KEY"]
 except Exception:
@@ -20,7 +20,7 @@ except Exception:
 REGIO = "eu"          
 MARKETS = "h2h,totals" 
 
-@st.cache_data(ttl=3600)  # Salva i dati in cache per 1 ora
+@st.cache_data(ttl=600)  # Ridotto a 10 minuti per maggiore reattività live
 def scarica_dati_live():
     sport_key = "soccer_fifa_world_cup" 
     url_odds = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
@@ -36,19 +36,34 @@ def scarica_dati_live():
     except:
         return None
 
+# --- PANNELLO DI CONTROLLO INTERATTIVO (In cima alla pagina) ---
+st.sidebar.header("🎛️ Pannello Schedina")
+
+# 1. Filtro tipo di rischio
+tipo_strategia = st.sidebar.radio(
+    "Scegli la strategia dell'algoritmo:",
+    ("🟢 Cassa Sicura (Quote Fascia Bassa)", "🟡 Bilanciata (Fascia Media)", "🔴 Alta Quota (Fascia Speculativa)")
+)
+
+# 2. Filtro numero eventi
+num_eventi = st.sidebar.slider("Quanti eventi vuoi in bolletta?", min_value=2, max_value=5, value=3)
+
+# 3. Pulsante di aggiornamento quote live
+if st.sidebar.button("🔄 Aggiorna Quote in Tempo Reale"):
+    st.cache_data.clear()
+    st.rerun()
+
 # Avvio scaricamento dati
-with st.spinner("🔄 Connessione ai bookmaker e analisi del palinsesto in corso..."):
+with st.spinner("⚡ Interrogando i server dei bookmaker..."):
     oracoli_data = scarica_dati_live()
 
 if not oracoli_data or 'error' in oracoli_data:
     st.error("Impossibile caricare i palinsesti in questo momento. Riprova più tardi.")
     st.stop()
 
-candidati_schedina = []
+database_completo = []
 
-st.header("📚 Lo Studio delle Partite")
-
-# Ciclo analisi dei match
+# Ciclo analisi e smistamento dei match
 for match in oracoli_data:
     home_team = match['home_team']
     away_team = match['away_team']
@@ -73,67 +88,87 @@ for match in oracoli_data:
     p_2 = (1 / quota_2) * 100
     p_X = (1 / quota_X) * 100
 
-    # Logica 3 Livelli Pronostici
+    # 🟢 Generazione Opzione Cassaforte
     if p_1 > 60:
-        cassaforte = "1X DOPPIA CHANCE"
-        prob_cassa = min(98.0, p_1 + p_X)
+        cassa_label, cassa_q, cassa_p = "1X DOPPIA CHANCE", round(1 / ((p_1+p_X)/100), 2), min(98.0, p_1 + p_X)
     elif p_2 > 60:
-        cassaforte = "X2 DOPPIA CHANCE"
-        prob_cassa = min(98.0, p_2 + p_X)
+        cassa_label, cassa_q, cassa_p = "X2 DOPPIA CHANCE", round(1 / ((p_2+p_X)/100), 2), min(98.0, p_2 + p_X)
     else:
-        cassaforte = "OVER 1.5 GOL"
-        prob_cassa = 83.5
+        cassa_label, cassa_q, cassa_p = "OVER 1.5 GOL", 1.22, 83.5
+    if cassa_q < 1.15: cassa_q = 1.20
 
+    # 🟡 Generazione Opzione Medio/Bilanciata
     if p_1 > p_2 and p_1 > 45:
-        medio = "1 FISSO"
-        prob_medio = p_1
+        medio_label, medio_q, medio_p = "1 FISSO", quota_1, p_1
     elif p_2 > p_1 and p_2 > 45:
-        medio = "2 FISSO"
-        prob_medio = p_2
+        medio_label, medio_q, medio_p = "2 FISSO", quota_2, p_2
     else:
-        medio = "UNDER 3.5 GOL"
-        prob_medio = 70.0
+        medio_label, medio_q, medio_p = "UNDER 3.5 GOL", 1.30, 70.0
 
+    # 🔴 Generazione Opzione Alta Quota
     if quota_over and quota_over < 2.10:
-        alta_quota = "OVER 2.5 GOL"
-        prob_alta = (1 / quota_over) * 100
+        alta_label, alta_q, alta_p = "OVER 2.5 GOL", quota_over, (1 / quota_over) * 100
     else:
-        alta_quota = "ESITO PAREGGIO (X)"
-        prob_alta = p_X
+        alta_label, alta_q, alta_p = "ESITO PAREGGIO (X)", quota_X, p_X
 
-    # Mostra lo studio del match in un box grafico espandibile per ogni partita
-    with st.expander(f"🏟️ {home_team} vs {away_team}"):
-        st.write(f"**Lavagna Quote Bookmaker:** 1 ({quota_1}) | X ({quota_X}) | 2 ({quota_2})")
-        col1, col2, col3 = st.columns(3)
-        col1.metric("🟢 CASSAFORTE", cassaforte, f"{prob_cassa:.1f}%")
-        col2.metric("🟡 MEDIO", medio, f"{prob_medio:.1f}%")
-        col3.metric("🔴 ALTA QUOTA", alta_quota, f"{prob_alta:.1f}%")
+    # Salviamo l'intero pacchetto dati del match
+    database_completo.append({
+        "coppia": f"{home_team} vs {away_team}",
+        "lavagna": f"1: {quota_1} | X: {quota_X} | 2: {quota_2}",
+        "cassa": {"giocata": cassa_label, "quota": cassa_q, "prob": cassa_p},
+        "medio": {"giocata": medio_label, "quota": medio_q, "prob": medio_p},
+        "alta": {"giocata": alta_label, "quota": alta_q, "prob": alta_p}
+    })
 
-    # Selezione per schedina finale
-    if 1.28 <= quota_1 <= 1.70:
-        candidati_schedina.append({"match": f"{home_team} vs {away_team}", "giocata": "1 FISSO", "quota": quota_1, "prob": p_1})
-    elif 1.28 <= quota_2 <= 1.70:
-        candidati_schedina.append({"match": f"{home_team} vs {away_team}", "giocata": "2 FISSO", "quota": quota_2, "prob": p_2})
-    elif quota_over and 1.35 <= quota_over <= 1.70:
-        candidati_schedina.append({"match": f"{home_team} vs {away_team}", "giocata": "OVER 2.5 GOL", "quota": quota_over, "prob": (1/quota_over)*100})
+# ==========================================
+# 📊 SEZIONE IN PRIMO PIANO: LA SCHEDINA DINAMICA
+# ==========================================
+st.header("💰 La Tua Schedina Personalizzata")
+st.caption("Modifica le impostazioni nella barra laterale sinistra per cambiare strategia!")
 
-# Costruzione Schedina Finale in fondo alla pagina
-st.markdown("---")
-st.header("💰 La Schedina Consigliata dall'Algoritmo")
+# Prepariamo la lista dei candidati in base alla strategia scelta dall'utente sul sito
+candidati_filtrati = []
+chiave_strategia = "cassa" if "🟢" in tipo_strategia else ("medio" if "🟡" in tipo_strategia else "alta")
 
-candidati_schedina = sorted(candidati_schedina, key=lambda x: x['prob'], reverse=True)
-schedina_pulita = candidati_schedina[:3]
+for d in database_completo:
+    candidati_filtrati.append({
+        "match": d["coppia"],
+        "giocata": d[chiave_strategia]["giocata"],
+        "quota": d[chiave_strategia]["quota"],
+        "prob": d[chiave_strategia]["prob"]
+    })
 
-if len(schedina_pulita) < 2:
-    st.warning("⚠️ Palinsesto troppo instabile oggi per generare una bolletta sicura. Consulta i singoli studi qui sopra!")
+# Ordina per probabilità di successo ed estrae il numero di eventi chiesto dall'utente
+candidati_filtrati = sorted(candidati_filtrati, key=lambda x: x['prob'], reverse=True)
+schedina_utente = candidati_filtrati[:num_eventi]
+
+if len(schedina_utente) < 2:
+    st.warning("⚠️ Troppi pochi eventi nel palinsesto attuale per soddisfare i filtri.")
 else:
     quota_totale = 1.0
-    for i, part in enumerate(schedina_pulita, 1):
-        st.info(f"**{i}. {part['match']}** \n\n  👉 Giocata: `{part['giocata']}` | 📉 Quota: **{part['quota']:.2f}** (Affidabilità: {part['prob']:.1f}%)")
-        quota_totale *= part['quota']
-    
-    st.success(f"🔥 **QUOTA TOTALE DELLA BOLLETTA: {quota_totale:.2f}**")
+    # Box grafico per contenere la schedina del giorno
+    with st.container():
+        for i, part in enumerate(schedina_utente, 1):
+            st.info(f"📌 **{i}. {part['match']}** \n\n Esito: `{part['giocata']}` | Quota: **{part['quota']:.2f}** (Affidabilità: {part['prob']:.1f}%)")
+            quota_totale *= part['quota']
+        
+        st.success(f"🔥 **QUOTA TOTALE MOLTIPLICATORE: {quota_totale:.2f}**")
 
-# FOOTER ELEGANTE IN FONDO ALLA PAGINA
+# ==========================================
+# 📚 SEZIONE IN BASSO: LO STUDIO DETTAGLIATO MATCH PER MATCH
+# ==========================================
 st.markdown("---")
-st.caption("© 2026 Mondiali Advisor | Sviluppato da Salvatore Cosmano. Tutti i diritti riservati.")
+st.header("📚 Il Centro Studi dell'Algoritmo")
+st.write("Clicca sulle singole partite qui sotto per vedere l'analisi matematica completa dei 3 livelli di rischio:")
+
+for d in database_completo:
+    with st.expander(f"🏟️ {d['coppia']}"):
+        st.write(f"**Quote di Partenza dei Bookmaker:** `{d['lavagna']}`")
+        col1, col2, col3 = st.columns(3)
+        col1.metric("🟢 CASSAFORTE", d["cassa"]["giocata"], f"{d['cassa']['quota']:.2f}")
+        col2.metric("🟡 MEDIO", d["medio"]["giocata"], f"{d['medio']['quota']:.2f}")
+        col3.metric("🔴 ALTA QUOTA", d["alta"]["giocata"], f"{d['alta']['quota']:.2f}")
+
+# FOOTER DI COPYRIGHT
+st.markdown("---")
+st.caption("© 2026 Mondiali Advisor | Sviluppato e ingegnerizzato da Salvatore Cosmano. Tutti i diritti riservati.")

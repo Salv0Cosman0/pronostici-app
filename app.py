@@ -1,4 +1,3 @@
-import streamlit as pd
 import streamlit as st
 import requests
 import numpy as np
@@ -7,7 +6,8 @@ import numpy as np
 st.set_page_config(page_title="Mondiali Advisor - Schedine Live", page_icon="⚽", layout="centered")
 
 st.title("⚽ Mondiali Advisor")
-st.subheader("I pronostici matematici in tempo reale per la tua bolletta")
+# FIRMA SOTTO IL TITOLO
+st.markdown("*Realizzato con orgoglio da **Salvatore Cosmano***")
 st.markdown("---")
 
 # Recupero automatico e sicuro della chiave API nascosta nei Secrets
@@ -20,7 +20,7 @@ except Exception:
 REGIO = "eu"          
 MARKETS = "h2h,totals" 
 
-@st.cache_data(ttl=3600)  # Salva i dati in cache per 1 ora per non consumare i crediti gratis dell'API
+@st.cache_data(ttl=3600)  # Salva i dati in cache per 1 ora
 def scarica_dati_live():
     sport_key = "soccer_fifa_world_cup" 
     url_odds = f"https://api.the-odds-api.com/v4/sports/{sport_key}/odds/"
@@ -133,3 +133,7 @@ else:
         quota_totale *= part['quota']
     
     st.success(f"🔥 **QUOTA TOTALE DELLA BOLLETTA: {quota_totale:.2f}**")
+
+# FOOTER ELEGANTE IN FONDO ALLA PAGINA
+st.markdown("---")
+st.caption("© 2026 Mondiali Advisor | Sviluppato da Salvatore Cosmano. Tutti i diritti riservati.")
